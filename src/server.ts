@@ -120,6 +120,8 @@ app.post('/scan', async (req, res) => {
 
 // ─── Scan single tenant (GET for easy webhook) ─────────────────────────────
 
+let lastResult: any = null
+
 app.get('/scan/:tenant', async (req, res) => {
   if (API_KEY && req.headers['x-api-key'] !== API_KEY && req.query.key !== API_KEY) {
     return res.status(401).json({ error: 'Invalid API key' })
@@ -130,15 +132,34 @@ app.get('/scan/:tenant', async (req, res) => {
   const tenant = tenants.find(t => t.name.toLowerCase() === req.params.tenant.toLowerCase())
   if (!tenant) return res.status(404).json({ error: `Tenant "${req.params.tenant}" not found` })
 
+  const async_mode = req.query.async === 'true'
+
   running = true
+
+  if (async_mode) {
+    // Fire and forget — respond immediately
+    res.json({ ok: true, message: 'Scan started in background. Check /health for status and /result for output.' })
+    runScan(tenant)
+      .then(result => { lastResult = result; running = false })
+      .catch(e => { lastResult = { error: e.message }; running = false })
+    return
+  }
+
   try {
     const result = await runScan(tenant)
+    lastResult = result
     res.json({ ok: true, result })
   } catch (e: any) {
     res.status(500).json({ error: e.message })
   } finally {
     running = false
   }
+})
+
+// ─── Last result ────────────────────────────────────────────────────────────
+
+app.get('/result', (_req, res) => {
+  res.json({ running, lastResult })
 })
 
 // ─── Cron job ───────────────────────────────────────────────────────────────
