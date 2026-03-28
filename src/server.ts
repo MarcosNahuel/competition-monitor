@@ -180,18 +180,35 @@ app.get('/test-scrape', async (req, res) => {
 
     if (catalogId) {
       const url = `https://www.mercadolibre.com.ar/p/${catalogId}`
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
-      await page.waitForTimeout(2000)
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 })
+      await page.waitForTimeout(3000)
       html = await page.content()
       offers = await scrapeProductPage(catalogId)
     } else {
       const encoded = encodeURIComponent(query).replace(/%20/g, '-')
       const url = `https://listado.mercadolibre.com.ar/${encoded}`
-      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
-      await page.waitForTimeout(2000)
+      await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 })
+      await page.waitForTimeout(3000)
       html = await page.content()
       offers = await scrapeSearchResults(query, 5)
     }
+
+    await page.close()
+    await closeBrowser()
+
+    // Analyze selectors
+    const selectorTests = await page.evaluate(() => {
+      return {
+        search_results: document.querySelectorAll('.ui-search-layout__item').length,
+        poly_cards: document.querySelectorAll('[class*="poly-card"]').length,
+        andes_price: document.querySelectorAll('.andes-money-amount__fraction').length,
+        search_result_wrapper: document.querySelectorAll('.ui-search-result__wrapper').length,
+        any_price: document.querySelectorAll('[class*="price"]').length,
+        any_result: document.querySelectorAll('[class*="result"]').length,
+        any_item: document.querySelectorAll('[class*="item"]').length,
+        body_text_sample: document.body?.textContent?.substring(0, 500) ?? '',
+      }
+    })
 
     await page.close()
     await closeBrowser()
@@ -200,8 +217,8 @@ app.get('/test-scrape', async (req, res) => {
       query,
       catalogId,
       html_length: html.length,
-      html_preview: html.substring(0, 2000),
       title_tag: html.match(/<title[^>]*>(.*?)<\/title>/)?.[1] ?? 'none',
+      selectors: selectorTests,
       offers_found: offers.length,
       offers,
     })

@@ -64,8 +64,8 @@ export async function scrapeSearchResults(
     const url = `https://listado.mercadolibre.com.ar/${encoded}`
     console.log(`[playwright] Searching: ${url}`)
 
-    await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
-    await page.waitForTimeout(3000) // Wait for dynamic content
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 })
+    await page.waitForTimeout(3000) // Wait for React hydration
 
     // Extract search result cards
     const results = await page.evaluate((max) => {
