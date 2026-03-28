@@ -22,6 +22,55 @@ app.get('/health', (_req, res) => {
   res.json({ status: 'ok', tenants: tenants.map(t => t.name), running })
 })
 
+// Debug: test Supabase connection per tenant
+app.get('/debug/:tenant', async (req, res) => {
+  const tenant = tenants.find(t => t.name.toLowerCase() === req.params.tenant.toLowerCase())
+  if (!tenant) return res.status(404).json({ error: 'Tenant not found' })
+
+  try {
+    const { createClient } = await import('@supabase/supabase-js')
+    const sb = createClient(tenant.supabase_url, tenant.supabase_key)
+
+    // Test 1: count listings
+    const { count, error: listErr } = await sb
+      .from('product_listings')
+      .select('*', { count: 'exact', head: true })
+      .eq('status', 'active')
+
+    // Test 2: get token
+    const { data: cred, error: credErr } = await sb
+      .from('channel_credentials')
+      .select('access_token, expires_at')
+      .eq('channel_id', tenant.channel_id)
+      .limit(1)
+      .single()
+
+    // Test 3: ML Search API test (from VPS IP)
+    const { default: axios } = await import('axios')
+    let searchTest = 'untested'
+    try {
+      const r = await axios.get('https://api.mercadolibre.com/sites/MLA/search?q=iphone&limit=1', { timeout: 5000 })
+      searchTest = `OK: ${r.data?.paging?.total ?? 0} results`
+    } catch (e: any) {
+      searchTest = `FAIL: ${e?.response?.status ?? e.message}`
+    }
+
+    res.json({
+      tenant: tenant.name,
+      supabase_url: tenant.supabase_url,
+      channel_id: tenant.channel_id,
+      listings_count: count,
+      listings_error: listErr?.message ?? null,
+      token_found: !!cred?.access_token,
+      token_expires: cred?.expires_at ?? null,
+      token_error: credErr?.message ?? null,
+      search_api: searchTest,
+    })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message })
+  }
+})
+
 // ─── Scan endpoint ──────────────────────────────────────────────────────────
 
 app.post('/scan', async (req, res) => {
