@@ -105,7 +105,7 @@ app.post('/scan', async (req, res) => {
         results.push({
           tenant: tenant.name,
           items_scanned: 0, catalog_found: 0, catalog_api_hits: 0,
-          search_api_hits: 0, self_filtered: 0, sellers_new: 0,
+          playwright_hits: 0, self_filtered: 0, sellers_new: 0,
           sellers_updated: 0, products_mapped: 0, winners_marked: 0,
           errors: 1, duration_ms: 0,
         })

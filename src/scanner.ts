@@ -12,8 +12,6 @@ import type { TenantConfig } from './config.js'
 import {
   getAccessToken,
   fetchCatalogCompetitors,
-  searchByKeywords,
-  searchByCatalogId,
   fetchItemsBatch,
   fetchSellerProfile,
   type CompetitorOffer,
@@ -26,7 +24,7 @@ export interface ScanResult {
   items_scanned: number
   catalog_found: number
   catalog_api_hits: number
-  search_api_hits: number
+  playwright_hits: number
   self_filtered: number
   sellers_new: number
   sellers_updated: number
@@ -117,7 +115,7 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
     .slice(0, MAX_CATALOG_PER_SCAN)
 
   let catalogApiHits = 0
-  let searchApiHits = 0
+  let playwrightHits = 0
   let selfFiltered = 0
   let errorCount = 0
 
@@ -155,67 +153,64 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
 
   console.log(`[scan:${tenant.name}] Catalog API: ${catalogApiHits} competitors found`)
 
-  // 3b. Search API fallback for products WITHOUT competitors yet
-  const needsSearch = listings
+  // 3b. Playwright fallback for products WITHOUT competitors yet
+  const needsScrape = listings
     .filter((l: any) => !allCompetitors.has(l.external_item_id) && l.title)
     .slice(0, MAX_SEARCH_PER_SCAN)
 
-  console.log(`[scan:${tenant.name}] Search API: checking ${needsSearch.length} products...`)
+  if (needsScrape.length > 0) {
+    console.log(`[scan:${tenant.name}] Playwright: scraping ${needsScrape.length} products...`)
 
-  for (let i = 0; i < needsSearch.length; i += 3) {
-    const batch = needsSearch.slice(i, i + 3) as any[]
-    const results = await Promise.allSettled(
-      batch.map(async (l) => {
-        const query = buildSearchQuery(l.title ?? '', '')
-        if (!query || query.length < 3) return { extItemId: l.external_item_id, offers: [] as CompetitorOffer[] }
+    const { scrapeSearchResults, scrapeProductPage, closeBrowser } = await import('./playwright-scraper.js')
 
-        // Try search by catalog_product_id first if available
+    try {
+      for (let i = 0; i < needsScrape.length; i++) {
+        const l = needsScrape[i] as any
         let offers: CompetitorOffer[] = []
-        if (l.catalog_product_id) {
-          offers = await searchByCatalogId(l.catalog_product_id)
+
+        try {
+          // Strategy 1: Product page (if has catalog_product_id)
+          if (l.catalog_product_id) {
+            offers = await scrapeProductPage(l.catalog_product_id)
+          }
+
+          // Strategy 2: Search results (fallback or no catalog)
+          if (offers.length === 0) {
+            const query = buildSearchQuery(l.title ?? '', '')
+            if (query && query.length >= 3) {
+              offers = await scrapeSearchResults(query, 15)
+            }
+          }
+        } catch (e: any) {
+          console.error(`[scan:${tenant.name}] Playwright error for ${l.external_item_id}:`, e.message)
+          errorCount++
         }
 
-        // Fallback to keyword search
-        if (offers.length === 0) {
-          offers = await searchByKeywords(query)
+        // Filter self
+        const filtered = offers.filter(o => {
+          if (ourItemIds.has(o.item_id)) { selfFiltered++; return false }
+          return true
+        })
 
-          // Filter by confidence
-          offers = offers.filter(o => {
-            const conf = computeMatchConfidence(o.seller_name, undefined, l.title ?? '', '')
-            return conf !== 'none'
-          })
+        if (filtered.length > 0) {
+          playwrightHits += filtered.length
+          allCompetitors.set(l.external_item_id, { extItemId: l.external_item_id, offers: filtered })
         }
 
-        return { extItemId: l.external_item_id, offers }
-      })
-    )
+        // Rate limit: 2s between pages
+        if (i < needsScrape.length - 1) await sleep(2000)
 
-    for (const r of results) {
-      if (r.status !== 'fulfilled') { errorCount++; continue }
-      const { extItemId, offers } = r.value
-      const filtered = offers.filter(o => {
-        if (String(o.seller_id).trim() === selfSellerId || ourItemIds.has(o.item_id)) {
-          selfFiltered++
-          return false
-        }
-        return true
-      })
-
-      if (filtered.length > 0) {
-        searchApiHits += filtered.length
-        const existing = allCompetitors.get(extItemId)
-        if (existing) {
-          existing.offers.push(...filtered)
-        } else {
-          allCompetitors.set(extItemId, { extItemId, offers: filtered })
+        // Progress log every 20 products
+        if ((i + 1) % 20 === 0) {
+          console.log(`[scan:${tenant.name}] Playwright progress: ${i + 1}/${needsScrape.length} (${playwrightHits} hits)`)
         }
       }
+    } finally {
+      await closeBrowser()
     }
 
-    if (i + 3 < needsSearch.length) await sleep(500)
+    console.log(`[scan:${tenant.name}] Playwright: ${playwrightHits} competitors found`)
   }
-
-  console.log(`[scan:${tenant.name}] Search API: ${searchApiHits} competitors found`)
 
   // 4. Enrich sellers + upsert
   const uniqueSellerIds = new Set<string>()
@@ -370,7 +365,7 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
     items_scanned: listings.length,
     catalog_found: catalogFound,
     catalog_api_hits: catalogApiHits,
-    search_api_hits: searchApiHits,
+    playwright_hits: playwrightHits,
     self_filtered: selfFiltered,
     sellers_new: sellersNew,
     sellers_updated: sellersUpdated,
@@ -382,7 +377,7 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
 }
 
 function emptyResult(tenant: string, start: number): ScanResult {
-  return { tenant, items_scanned: 0, catalog_found: 0, catalog_api_hits: 0, search_api_hits: 0, self_filtered: 0, sellers_new: 0, sellers_updated: 0, products_mapped: 0, winners_marked: 0, errors: 0, duration_ms: Date.now() - start }
+  return { tenant, items_scanned: 0, catalog_found: 0, catalog_api_hits: 0, playwright_hits: 0, self_filtered: 0, sellers_new: 0, sellers_updated: 0, products_mapped: 0, winners_marked: 0, errors: 0, duration_ms: Date.now() - start }
 }
 
 function buildSellerRow(tenantId: string, sellerId: string, nickname: string, profile: SellerProfile | null) {
