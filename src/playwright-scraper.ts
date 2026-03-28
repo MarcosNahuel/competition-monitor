@@ -67,7 +67,7 @@ export async function scrapeSearchResults(
     await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 })
     await page.waitForTimeout(3000) // Wait for React hydration
 
-    // Extract search result cards
+    // Extract search result cards — ML Argentina 2026 uses poly-card components
     const results = await page.evaluate((max) => {
       const items: Array<{
         itemId: string | null
@@ -79,23 +79,25 @@ export async function scrapeSearchResults(
         hasFreeShipping: boolean
       }> = []
 
-      // Search result selectors (ML Argentina 2026)
+      // Primary: poly-card grid items (current ML layout 2026)
       const cards = document.querySelectorAll(
-        '.ui-search-layout__item, .ui-search-result__wrapper, [class*="ui-search-result"]'
+        '.ui-search-layout__item, [class*="poly-card"]'
       )
 
       for (const card of Array.from(cards).slice(0, max)) {
-        // Price
-        const priceEl = card.querySelector('.andes-money-amount__fraction, [class*="price-tag-fraction"]')
+        // Price — andes money component
+        const priceEl = card.querySelector('.andes-money-amount__fraction')
         const priceText = priceEl?.textContent?.replace(/\./g, '').replace(/,/g, '.').trim()
         const price = priceText ? parseFloat(priceText) : null
 
-        // Title + Link
-        const linkEl = card.querySelector('a.ui-search-link, a.ui-search-item__group__element, a[class*="ui-search-link"]') as HTMLAnchorElement
-        const title = linkEl?.textContent?.trim() ?? card.querySelector('h2')?.textContent?.trim() ?? ''
+        // Title
+        const titleEl = card.querySelector('.poly-component__title a, .poly-component__title, h2, a[class*="title"]')
+        const title = titleEl?.textContent?.trim() ?? ''
+
+        // Link — find any link with MLA in href
+        const linkEl = card.querySelector('a[href*="MLA"]') as HTMLAnchorElement
         const permalink = linkEl?.href ?? null
 
-        // Extract item ID from URL
         let itemId: string | null = null
         if (permalink) {
           const match = permalink.match(/MLA-?(\d+)/)
@@ -103,15 +105,15 @@ export async function scrapeSearchResults(
         }
 
         // Seller
-        const sellerEl = card.querySelector('.ui-search-official-store-label, [class*="seller"]')
+        const sellerEl = card.querySelector('.poly-component__seller, [class*="seller"], [class*="official-store"]')
         const sellerName = sellerEl?.textContent?.trim() ?? null
 
-        // Fulfillment badge
-        const fulfillmentEl = card.querySelector('[class*="fulfillment"], [class*="full"]')
+        // Fulfillment — full/flex badge
+        const fulfillmentEl = card.querySelector('[class*="fulfillment"], [class*="full-icon"]')
         const hasFulfillment = !!fulfillmentEl
 
-        // Free shipping badge
-        const shippingEl = card.querySelector('[class*="free-shipping"], .ui-search-item__shipping')
+        // Free shipping
+        const shippingEl = card.querySelector('[class*="shipping"]')
         const hasFreeShipping = !!shippingEl
 
         if (price && price > 0) {

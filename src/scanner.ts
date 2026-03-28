@@ -169,18 +169,24 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
         let offers: CompetitorOffer[] = []
 
         try {
-          // Strategy 1: Product page (if has catalog_product_id)
-          if (l.catalog_product_id) {
-            offers = await scrapeProductPage(l.catalog_product_id)
-          }
-
-          // Strategy 2: Search results (fallback or no catalog)
-          if (offers.length === 0) {
-            const query = buildSearchQuery(l.title ?? '', '')
-            if (query && query.length >= 3) {
-              offers = await scrapeSearchResults(query, 15)
+          // Timeout wrapper: 60s max per product
+          const scrapePromise = (async () => {
+            // Strategy 1: Product page (if has catalog_product_id)
+            if (l.catalog_product_id) {
+              offers = await scrapeProductPage(l.catalog_product_id)
             }
-          }
+            // Strategy 2: Search results (fallback or no catalog)
+            if (offers.length === 0) {
+              const query = buildSearchQuery(l.title ?? '', '')
+              if (query && query.length >= 3) {
+                offers = await scrapeSearchResults(query, 15)
+              }
+            }
+          })()
+          await Promise.race([
+            scrapePromise,
+            sleep(60000).then(() => { throw new Error('Playwright timeout 60s') })
+          ])
         } catch (e: any) {
           console.error(`[scan:${tenant.name}] Playwright error for ${l.external_item_id}:`, e.message)
           errorCount++
@@ -197,11 +203,11 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
           allCompetitors.set(l.external_item_id, { extItemId: l.external_item_id, offers: filtered })
         }
 
-        // Rate limit: 2s between pages
-        if (i < needsScrape.length - 1) await sleep(2000)
+        // Rate limit: 5s between pages to avoid ML blocking
+        if (i < needsScrape.length - 1) await sleep(5000)
 
-        // Progress log every 20 products
-        if ((i + 1) % 20 === 0) {
+        // Progress log every 10 products
+        if ((i + 1) % 10 === 0) {
           console.log(`[scan:${tenant.name}] Playwright progress: ${i + 1}/${needsScrape.length} (${playwrightHits} hits)`)
         }
       }
