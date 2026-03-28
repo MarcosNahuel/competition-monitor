@@ -34,13 +34,17 @@ export interface SellerProfile {
 // ─── Token refresh ──────────────────────────────────────────────────────────
 
 export async function getAccessToken(supabase: any, channelId: string): Promise<string | null> {
-  const { data: cred } = await supabase
+  const { data: cred, error } = await supabase
     .from('channel_credentials')
     .select('access_token, refresh_token, client_id, client_secret, expires_at')
     .eq('channel_id', channelId)
     .limit(1)
     .single()
 
+  if (error) {
+    console.error(`[ml-api] Error fetching token for channel ${channelId}:`, error.message)
+    return null
+  }
   if (!cred) return null
 
   // Check if token needs refresh (5 min buffer)
