@@ -175,23 +175,16 @@ app.get('/test-scrape', async (req, res) => {
       Object.defineProperty(navigator, 'webdriver', { get: () => false })
     })
 
-    let html = ''
-    let offers: any[] = []
+    const encoded = catalogId
+      ? null
+      : encodeURIComponent(query).replace(/%20/g, '-')
+    const url = catalogId
+      ? `https://www.mercadolibre.com.ar/p/${catalogId}`
+      : `https://listado.mercadolibre.com.ar/${encoded}`
 
-    if (catalogId) {
-      const url = `https://www.mercadolibre.com.ar/p/${catalogId}`
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 })
-      await page.waitForTimeout(3000)
-      html = await page.content()
-      offers = await scrapeProductPage(catalogId)
-    } else {
-      const encoded = encodeURIComponent(query).replace(/%20/g, '-')
-      const url = `https://listado.mercadolibre.com.ar/${encoded}`
-      await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 })
-      await page.waitForTimeout(3000)
-      html = await page.content()
-      offers = await scrapeSearchResults(query, 5)
-    }
+    await page.goto(url, { waitUntil: 'networkidle', timeout: 45000 })
+    await page.waitForTimeout(5000) // Extra wait for full hydration
+    const html = await page.content()
 
     await page.close()
     await closeBrowser()
@@ -211,16 +204,14 @@ app.get('/test-scrape', async (req, res) => {
     })
 
     await page.close()
+    await ctx.close()
     await closeBrowser()
 
     res.json({
-      query,
-      catalogId,
+      url,
       html_length: html.length,
       title_tag: html.match(/<title[^>]*>(.*?)<\/title>/)?.[1] ?? 'none',
       selectors: selectorTests,
-      offers_found: offers.length,
-      offers,
     })
   } catch (e: any) {
     res.status(500).json({ error: e.message, stack: e.stack?.split('\n').slice(0, 5) })
