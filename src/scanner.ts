@@ -47,8 +47,17 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
 
   console.log(`[scan:${tenant.name}] Starting...`)
 
-  // Get ML token
-  const token = await getAccessToken(sb, tenant.channel_id)
+  // Get ML token — debug: test direct query first
+  const { data: directCred, error: directErr } = await sb
+    .from('channel_credentials')
+    .select('access_token')
+    .eq('channel_id', tenant.channel_id)
+    .limit(1)
+    .maybeSingle()
+
+  console.log(`[scan:${tenant.name}] Direct token query: found=${!!directCred?.access_token}, error=${directErr?.message ?? 'none'}`)
+
+  const token = directCred?.access_token ?? await getAccessToken(sb, tenant.channel_id)
   if (!token) throw new Error('ML token not available')
 
   // 1. Read active listings
