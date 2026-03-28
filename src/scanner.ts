@@ -203,12 +203,14 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
           allCompetitors.set(l.external_item_id, { extItemId: l.external_item_id, offers: filtered })
         }
 
-        // Rate limit: 5s between pages to avoid ML blocking
-        if (i < needsScrape.length - 1) await sleep(5000)
-
-        // Progress log every 10 products
-        if ((i + 1) % 10 === 0) {
-          console.log(`[scan:${tenant.name}] Playwright progress: ${i + 1}/${needsScrape.length} (${playwrightHits} hits)`)
+        // Rate limit: 3s between pages, 60s pause every 10 products
+        if (i < needsScrape.length - 1) {
+          if ((i + 1) % 10 === 0) {
+            console.log(`[scan:${tenant.name}] Playwright progress: ${i + 1}/${needsScrape.length} (${playwrightHits} hits) — pausing 60s to avoid ML block`)
+            await sleep(60000) // 60s pause every 10 products
+          } else {
+            await sleep(3000)
+          }
         }
       }
     } finally {
