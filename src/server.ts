@@ -156,6 +156,52 @@ app.get('/scan/:tenant', async (req, res) => {
   }
 })
 
+// ─── Playwright test ────────────────────────────────────────────────────────
+
+app.get('/test-scrape', async (req, res) => {
+  const query = (req.query.q as string) ?? 'bicicleta r29 shimano'
+  const catalogId = req.query.catalog as string | undefined
+
+  try {
+    const { scrapeSearchResults, scrapeProductPage, getBrowser, closeBrowser } = await import('./playwright-scraper.js')
+    const b = await getBrowser()
+    const page = await b.newPage()
+
+    let html = ''
+    let offers: any[] = []
+
+    if (catalogId) {
+      const url = `https://www.mercadolibre.com.ar/p/${catalogId}`
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await page.waitForTimeout(2000)
+      html = await page.content()
+      offers = await scrapeProductPage(catalogId)
+    } else {
+      const encoded = encodeURIComponent(query).replace(/%20/g, '-')
+      const url = `https://listado.mercadolibre.com.ar/${encoded}`
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
+      await page.waitForTimeout(2000)
+      html = await page.content()
+      offers = await scrapeSearchResults(query, 5)
+    }
+
+    await page.close()
+    await closeBrowser()
+
+    res.json({
+      query,
+      catalogId,
+      html_length: html.length,
+      html_preview: html.substring(0, 2000),
+      title_tag: html.match(/<title[^>]*>(.*?)<\/title>/)?.[1] ?? 'none',
+      offers_found: offers.length,
+      offers,
+    })
+  } catch (e: any) {
+    res.status(500).json({ error: e.message, stack: e.stack?.split('\n').slice(0, 5) })
+  }
+})
+
 // ─── Last result ────────────────────────────────────────────────────────────
 
 app.get('/result', (_req, res) => {
