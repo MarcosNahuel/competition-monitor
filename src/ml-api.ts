@@ -39,7 +39,7 @@ export async function getAccessToken(supabase: any, channelId: string): Promise<
     .select('access_token, refresh_token, client_id, client_secret, expires_at')
     .eq('channel_id', channelId)
     .limit(1)
-    .single()
+    .maybeSingle()
 
   if (error) {
     console.error(`[ml-api] Error fetching token for channel ${channelId}:`, error.message)
