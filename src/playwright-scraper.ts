@@ -11,11 +11,19 @@ import type { CompetitorOffer } from './ml-api.js'
 
 let browser: Browser | null = null
 
+const USER_AGENT = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+
 export async function getBrowser(): Promise<Browser> {
   if (!browser || !browser.isConnected()) {
     browser = await chromium.launch({
       headless: true,
-      args: ['--disable-dev-shm-usage', '--no-sandbox', '--disable-gpu'],
+      args: [
+        '--disable-dev-shm-usage',
+        '--no-sandbox',
+        '--disable-gpu',
+        '--disable-blink-features=AutomationControlled',
+        `--user-agent=${USER_AGENT}`,
+      ],
     })
     console.log('[playwright] Browser launched')
   }
@@ -37,7 +45,18 @@ export async function scrapeSearchResults(
   maxResults: number = 20
 ): Promise<CompetitorOffer[]> {
   const b = await getBrowser()
-  const page = await b.newPage()
+  const ctx = await b.newContext({
+    userAgent: USER_AGENT,
+    locale: 'es-AR',
+    viewport: { width: 1366, height: 768 },
+  })
+  const page = await ctx.newPage()
+
+  // Anti-detection: hide webdriver
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false })
+  })
+
   const offers: CompetitorOffer[] = []
 
   try {
@@ -46,7 +65,7 @@ export async function scrapeSearchResults(
     console.log(`[playwright] Searching: ${url}`)
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
-    await page.waitForTimeout(2000) // Wait for dynamic content
+    await page.waitForTimeout(3000) // Wait for dynamic content
 
     // Extract search result cards
     const results = await page.evaluate((max) => {
@@ -135,7 +154,15 @@ export async function scrapeProductPage(
   catalogProductId: string
 ): Promise<CompetitorOffer[]> {
   const b = await getBrowser()
-  const page = await b.newPage()
+  const ctx = await b.newContext({
+    userAgent: USER_AGENT,
+    locale: 'es-AR',
+    viewport: { width: 1366, height: 768 },
+  })
+  const page = await ctx.newPage()
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'webdriver', { get: () => false })
+  })
   const offers: CompetitorOffer[] = []
 
   try {
@@ -143,7 +170,7 @@ export async function scrapeProductPage(
     console.log(`[playwright] Product page: ${url}`)
 
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 30000 })
-    await page.waitForTimeout(2000)
+    await page.waitForTimeout(3000)
 
     // Pass 1: JSON-LD extraction (most reliable)
     const jsonLdOffers = await extractJsonLd(page)

@@ -165,7 +165,15 @@ app.get('/test-scrape', async (req, res) => {
   try {
     const { scrapeSearchResults, scrapeProductPage, getBrowser, closeBrowser } = await import('./playwright-scraper.js')
     const b = await getBrowser()
-    const page = await b.newPage()
+    const ctx = await b.newContext({
+      userAgent: 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      locale: 'es-AR',
+      viewport: { width: 1366, height: 768 },
+    })
+    const page = await ctx.newPage()
+    await page.addInitScript(() => {
+      Object.defineProperty(navigator, 'webdriver', { get: () => false })
+    })
 
     let html = ''
     let offers: any[] = []
