@@ -84,7 +84,9 @@ export async function scrapeSearchResults(
         '.ui-search-layout__item, [class*="poly-card"]'
       )
 
-      for (const card of Array.from(cards).slice(0, max)) {
+      const seen = new Set<string>() // dedup by itemId
+
+      for (const card of Array.from(cards).slice(0, max * 2)) { // scan more, dedup later
         // Price — andes money component
         const priceEl = card.querySelector('.andes-money-amount__fraction')
         const priceText = priceEl?.textContent?.replace(/\./g, '').replace(/,/g, '.').trim()
@@ -94,15 +96,34 @@ export async function scrapeSearchResults(
         const titleEl = card.querySelector('.poly-component__title a, .poly-component__title, h2, a[class*="title"]')
         const title = titleEl?.textContent?.trim() ?? ''
 
-        // Link — find any link with MLA in href
-        const linkEl = card.querySelector('a[href*="MLA"]') as HTMLAnchorElement
-        const permalink = linkEl?.href ?? null
-
+        // Link — find organic links (skip ads with mclics/clicks)
+        const allLinks = card.querySelectorAll('a[href]') as NodeListOf<HTMLAnchorElement>
+        let permalink: string | null = null
         let itemId: string | null = null
-        if (permalink) {
-          const match = permalink.match(/MLA-?(\d+)/)
-          if (match) itemId = `MLA${match[1]}`
+
+        for (const a of allLinks) {
+          const href = a.href
+          // Skip ad tracking links
+          if (href.includes('click1.mercadolibre') || href.includes('mclics/clicks')) continue
+          // Find MLA item ID in organic link
+          const match = href.match(/MLA-?(\d+)/)
+          if (match) {
+            itemId = `MLA${match[1]}`
+            permalink = href
+            break
+          }
+          // Also check /p/ catalog links
+          const catMatch = href.match(/\/p\/(MLA\d+)/)
+          if (catMatch) {
+            itemId = catMatch[1]
+            permalink = href
+            break
+          }
         }
+
+        // Skip if no valid link found or already seen
+        if (!itemId || seen.has(itemId)) continue
+        seen.add(itemId)
 
         // Seller
         const sellerEl = card.querySelector('.poly-component__seller, [class*="seller"], [class*="official-store"]')

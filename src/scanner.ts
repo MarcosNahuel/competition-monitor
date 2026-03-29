@@ -192,9 +192,15 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
           errorCount++
         }
 
-        // Filter self
+        // Filter self — by item_id AND by catalog_product_id (our own catalog pages)
+        const ourCatalogIds = new Set(
+          listings.filter((x: any) => x.catalog_product_id).map((x: any) => x.catalog_product_id)
+        )
         const filtered = offers.filter(o => {
+          // Filter our own item IDs
           if (ourItemIds.has(o.item_id)) { selfFiltered++; return false }
+          // Filter catalog product IDs that point to our own listings
+          if (o.item_id.startsWith('MLA') && ourCatalogIds.has(o.item_id)) { selfFiltered++; return false }
           return true
         })
 
