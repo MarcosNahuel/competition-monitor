@@ -35,7 +35,7 @@ export interface ScanResult {
 }
 
 const MAX_CATALOG_PER_SCAN = 150
-const MAX_SEARCH_PER_SCAN = 200
+const MAX_SEARCH_PER_SCAN = 100
 const MAX_SELLER_ENRICHMENTS = 30
 
 export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
@@ -212,7 +212,9 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
         // Rate limit: 3s between pages, 60s pause every 10 products
         if (i < needsScrape.length - 1) {
           if ((i + 1) % 10 === 0) {
-            console.log(`[scan:${tenant.name}] Playwright progress: ${i + 1}/${needsScrape.length} (${playwrightHits} hits) — pausing 60s to avoid ML block`)
+            console.log(`[scan:${tenant.name}] Playwright progress: ${i + 1}/${needsScrape.length} (${playwrightHits} hits) — writing batch + pausing 60s`)
+            // Incremental write: save what we have so far
+            await writeCompetitors(sb, tenant, allCompetitors, listings as any[], selfSellerId)
             await sleep(60000) // 60s pause every 10 products
           } else {
             await sleep(3000)
@@ -299,8 +301,7 @@ export async function runScan(tenant: TenantConfig): Promise<ScanResult> {
     const ourPrice = Number(listing?.price ?? 0)
 
     const rows = entry.offers.map(o => {
-      const dbSellerId = sellerDbMap.get(o.seller_id)
-      if (!dbSellerId) return null
+      const dbSellerId = sellerDbMap.get(o.seller_id) ?? null
 
       return {
         tenant_id: tenant.tenant_id,
@@ -416,3 +417,49 @@ function buildSellerRow(tenantId: string, sellerId: string, nickname: string, pr
 }
 
 function sleep(ms: number) { return new Promise(r => setTimeout(r, ms)) }
+
+/** Incremental write: upsert competitors found so far */
+async function writeCompetitors(
+  sb: any,
+  tenant: TenantConfig,
+  allCompetitors: Map<string, { extItemId: string; offers: CompetitorOffer[] }>,
+  listings: any[],
+  selfSellerId: string
+): Promise<number> {
+  let written = 0
+  for (const [extItemId, entry] of allCompetitors) {
+    const listing = listings.find((l: any) => l.external_item_id === extItemId)
+    const ourPrice = Number(listing?.price ?? 0)
+
+    const rows = entry.offers.map(o => ({
+      tenant_id: tenant.tenant_id,
+      product_id: listing?.product_id ?? null,
+      external_item_id: extItemId,
+      seller_id: null,
+      competitor_item_id: o.item_id,
+      competitor_price: o.price,
+      competitor_original_price: o.original_price,
+      competitor_stock: o.available_quantity,
+      competitor_sold_qty: o.sold_quantity,
+      competitor_fulfillment: o.logistic_type === 'fulfillment' || o.logistic_type === 'cross_docking',
+      competitor_catalog_listing: o.catalog_listing,
+      competitor_shipping_free: true,
+      fulfillment_type: o.logistic_type,
+      permalink: o.permalink,
+      price_diff_pct: ourPrice > 0 ? Math.round(((o.price - ourPrice) / ourPrice) * 10000) / 100 : null,
+      catalog_product_id: listing?.catalog_product_id ?? null,
+      is_catalog_winner: false,
+      last_seen_at: new Date().toISOString(),
+    }))
+
+    for (let i = 0; i < rows.length; i += 50) {
+      const chunk = rows.slice(i, i + 50)
+      const { error } = await sb.from('competition_map')
+        .upsert(chunk, { onConflict: 'tenant_id,external_item_id,competitor_item_id' })
+      if (!error) written += chunk.length
+      else console.error(`[writeCompetitors] Error:`, error.message)
+    }
+  }
+  console.log(`[writeCompetitors] Wrote ${written} rows`)
+  return written
+}
